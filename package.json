@@ -1,6 +1,6 @@
 {
   "name": "opencode-gpt-image",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Plug-and-play image generation & editing tools for opencode, powered by OpenAI gpt-image-2.",
   "type": "module",
   "main": "./src/index.ts",

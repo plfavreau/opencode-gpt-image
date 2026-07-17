@@ -43,8 +43,10 @@ Restart opencode. Done.
 
 | Tool | Does |
 | --- | --- |
-| `image_generate` | Text prompt -> image(s), saved to disk. |
+| `image_generate` | Text prompt (+ optional reference image(s)) -> image(s), saved to disk. |
 | `image_edit` | Edit/transform existing image(s), optional mask, -> image(s). |
+
+`image_generate` also accepts an optional `image_paths` array of existing reference images to guide/condition the generation.
 
 Both support `size`, `quality`, `background`, `output_format`, `n`, and `output_path`.
 

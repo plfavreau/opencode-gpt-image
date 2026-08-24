@@ -1,6 +1,6 @@
 {
   "name": "opencode-gpt-image",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Plug-and-play image generation & editing tools for opencode, powered by OpenAI gpt-image-2.",
   "type": "module",
   "main": "./src/index.ts",
@@ -20,7 +20,11 @@
     "openai",
     "image-generation",
     "image-editing",
-    "ai"
+    "ai",
+    "chatgpt",
+    "chatgpt-subscription",
+    "codex",
+    "oauth"
   ],
   "author": "plfavreau",
   "license": "MIT",
@@ -34,5 +38,14 @@
   },
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.3.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.18.21",
+    "@types/bun": "^1.4.0",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
   }
 }

@@ -1,13 +1,18 @@
-import { readFileSync } from "fs"
-import os from "os"
 import path from "path"
+import type { OpenAICredential } from "./opencode-auth"
 
 /**
  * Shared helpers for the OpenAI image tools (image_generate, image_edit).
  *
- * Auth: a Platform API key is required (https://platform.openai.com/api-keys),
- * billed per image. This is NOT the Codex / "Sign in with ChatGPT" subscription
- * token, which cannot reach the image endpoints.
+ * Two credential modes, resolved by ./opencode-auth:
+ *   - "api":   a Platform API key (https://platform.openai.com/api-keys), billed
+ *              per image. Talks to api.openai.com/v1/images/*.
+ *   - "oauth": the user's ChatGPT/Codex subscription, reusing whatever
+ *              credential opencode itself manages for `opencode auth login`.
+ *              Talks to the same undocumented chatgpt.com/backend-api/codex
+ *              image endpoints Codex CLI uses -- no per-image API billing,
+ *              but best-effort: this surface is not publicly documented and
+ *              can change without notice.
  *
  * gpt-image-2 is the default: it is the newest/best image model and is priced
  * the same on input and slightly cheaper on output than gpt-image-1.5, so there
@@ -17,46 +22,38 @@ import path from "path"
  */
 export const DEFAULT_MODEL = "gpt-image-2"
 
-/**
- * Resolve the OpenAI API key. Order:
- *   1. OPENAI_API_KEY env var
- *   2. A key file: OPENCODE_OPENAI_KEY_FILE, else ~/.config/opencode/openai.key
- * The file fallback means you can store the key once and never set the env var.
- */
-export function resolveApiKey(): string {
-  const fromEnv = process.env["OPENAI_API_KEY"]?.trim()
-  if (fromEnv) return fromEnv
+export const OPENAI_IMAGE_ENDPOINT = "https://api.openai.com/v1/images/generations"
+export const OPENAI_IMAGE_EDIT_ENDPOINT = "https://api.openai.com/v1/images/edits"
+// Undocumented, reused from Codex CLI / opencode's own Codex OAuth plugin.
+// No compatibility guarantee -- see README for details.
+export const CHATGPT_IMAGE_ENDPOINT =
+  "https://chatgpt.com/backend-api/codex/images/generations"
+export const CHATGPT_IMAGE_EDIT_ENDPOINT =
+  "https://chatgpt.com/backend-api/codex/images/edits"
 
-  const keyFile =
-    process.env["OPENCODE_OPENAI_KEY_FILE"]?.trim() ||
-    path.join(os.homedir(), ".config", "opencode", "openai.key")
-  try {
-    const fromFile = readFileSync(keyFile, "utf8").trim()
-    if (fromFile) return fromFile
-  } catch {
-    // file missing / unreadable -> fall through to error
+/** Auth headers for either credential mode. */
+export function authHeaders(credential: OpenAICredential): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${credential.mode === "oauth" ? credential.access : credential.key}`,
   }
-
-  throw new Error(
-    `No OpenAI API key found. Either set the OPENAI_API_KEY environment variable, ` +
-      `or write the key (and nothing else) into ${keyFile}. ` +
-      `Image generation needs a platform API key (https://platform.openai.com/api-keys), ` +
-      `billed per image, separate from the Codex/ChatGPT subscription.`,
-  )
+  if (credential.mode === "oauth" && credential.accountId) {
+    headers["ChatGPT-Account-Id"] = credential.accountId
+  }
+  return headers
 }
 
 export type ImageData = { b64_json?: string; url?: string }
 
-/** POST to an OpenAI images endpoint and return the data array (throws on error). */
+/** POST to an OpenAI/ChatGPT images endpoint and return the data array (throws on error). */
 export async function requestImages(
   url: string,
-  apiKey: string,
+  headers: Record<string, string>,
   init: RequestInit,
 ): Promise<ImageData[]> {
   const res = await fetch(url, {
     ...init,
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      ...headers,
       ...((init.headers as Record<string, string>) || {}),
     },
   })
@@ -69,15 +66,29 @@ export async function requestImages(
     } catch {
       // keep raw text
     }
-    throw new Error(
-      `OpenAI Images API error (${res.status} ${res.statusText}): ${message}`,
-    )
+    throw new Error(`Image request failed (${res.status} ${res.statusText}): ${message}`)
   }
 
   const json = (await res.json()) as { data?: ImageData[] }
   const data = json.data ?? []
-  if (data.length === 0) throw new Error("OpenAI returned no image data.")
+  if (data.length === 0) throw new Error("No image data returned.")
   return data
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+}
+
+/** Read a local image file and encode it as a data: URL, for the OAuth (ChatGPT) JSON APIs. */
+export async function toDataUrl(absPath: string): Promise<string> {
+  const mime = MIME_BY_EXT[path.extname(absPath).toLowerCase()] || "image/png"
+  const bytes = await Bun.file(absPath).arrayBuffer()
+  const b64 = Buffer.from(bytes).toString("base64")
+  return `data:${mime};base64,${b64}`
 }
 
 /**
@@ -116,9 +127,7 @@ export async function saveImages(
   }
 
   if (saved.length === 0) {
-    throw new Error(
-      "OpenAI response contained no base64 image payloads to save.",
-    )
+    throw new Error("OpenAI response contained no base64 image payloads to save.")
   }
   return saved
 }

@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["node", "bun"]
   },
-  "include": ["src"]
+  "include": ["src", "index.ts", "tests"]
 }

@@ -1,5 +1,5 @@
-import { tool } from "@opencode-ai/plugin"
-import type { PluginInput } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
+import { generateInput, type ImageInput } from "./tool-input"
 import path from "path"
 import {
   CHATGPT_IMAGE_EDIT_ENDPOINT,
@@ -26,67 +26,19 @@ import { resolveCredential } from "./opencode-auth"
  * ./opencode-auth for the full resolution order.
  */
 
-const SIZES = ["auto", "1024x1024", "1536x1024", "1024x1536"] as const
-const QUALITIES = ["auto", "low", "medium", "high"] as const
-const BACKGROUNDS = ["auto", "transparent", "opaque"] as const
-const FORMATS = ["png", "jpeg", "webp"] as const
+type Context = Parameters<NonNullable<ReturnType<typeof Plugin.define>["setup"]>>[0]
 
-export function createImageGenerate(client: PluginInput["client"]) {
-  return tool({
+export function createImageGenerate(client: Context) {
+  return {
+    name: "image_generate",
     description:
       "Generate one or more images from a text prompt using OpenAI's image model (default gpt-image-2) and save them to disk. Optionally provide existing reference image(s) to guide/condition the generation. Returns the saved file path(s). Uses an OpenAI platform API key if OPENAI_API_KEY (or ~/.config/opencode/openai.key) is set, otherwise falls back to the ChatGPT/Codex subscription already connected via `opencode auth login`.",
-    args: {
-      prompt: tool.schema
-        .string()
-        .min(1)
-        .describe("Text description of the image to generate."),
-      image_paths: tool.schema
-        .array(tool.schema.string())
-        .optional()
-        .describe(
-          "Optional path(s) to existing reference image file(s) (png/jpg/webp) to guide the generation. When provided, the model conditions the new image on these inputs. Relative paths resolve against the session directory.",
-        ),
-      size: tool.schema
-        .enum(SIZES)
-        .optional()
-        .describe("Image dimensions. Default 'auto'."),
-      quality: tool.schema
-        .enum(QUALITIES)
-        .optional()
-        .describe("Rendering quality. Higher quality costs more. Default 'auto'."),
-      background: tool.schema
-        .enum(BACKGROUNDS)
-        .optional()
-        .describe(
-          "Background. 'transparent' requires output_format png or webp. Default 'auto'.",
-        ),
-      output_format: tool.schema
-        .enum(FORMATS)
-        .optional()
-        .describe("File format of the saved image. Default 'png'."),
-      n: tool.schema
-        .number()
-        .int()
-        .min(1)
-        .max(10)
-        .optional()
-        .describe("How many images to generate. Default 1."),
-      output_path: tool.schema
-        .string()
-        .optional()
-        .describe(
-          "Where to save. A directory, or a file path (used as a base name when n>1). Relative paths resolve against the session directory. Defaults to the session directory.",
-        ),
-      model: tool.schema
-        .string()
-        .optional()
-        .describe(
-          "Image model id. Defaults to OPENCODE_IMAGE_MODEL or 'gpt-image-2'. Use 'gpt-image-1-mini' for cheaper/lower-quality output.",
-        ),
-    },
-    async execute(args, context) {
+    input: generateInput,
+    async execute(raw: unknown, context: { sessionID: string; signal: AbortSignal }) {
+      const args = raw as ImageInput
       const credential = await resolveCredential(client)
-      const baseDir = context.directory || process.cwd()
+      const session = await client.session.get({ sessionID: context.sessionID })
+      const baseDir = session.location.directory
       const model =
         args.model || process.env["OPENCODE_IMAGE_MODEL"] || DEFAULT_MODEL
       const format = args.output_format || "png"
@@ -126,7 +78,7 @@ export function createImageGenerate(client: PluginInput["client"]) {
               size: args.size || "auto",
               quality: args.quality || "auto",
             }),
-          })
+          }, context.signal)
         } else {
           // Platform API key: multipart via the edits endpoint.
           const form = new FormData()
@@ -150,7 +102,7 @@ export function createImageGenerate(client: PluginInput["client"]) {
           data = await requestImages(OPENAI_IMAGE_EDIT_ENDPOINT, authHeaders(credential), {
             method: "POST",
             body: form,
-          })
+          }, context.signal)
         }
       } else {
         const body: Record<string, unknown> = {
@@ -171,19 +123,20 @@ export function createImageGenerate(client: PluginInput["client"]) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           },
+          context.signal,
         )
       }
 
       const saved = await saveImages(data, format, baseDir, args.output_path)
 
-      return [
+      return { content: [
         `Generated ${saved.length} image(s) with ${model} via ${
           credential.mode === "oauth" ? "your ChatGPT subscription" : "the OpenAI API"
         } (${args.size || "auto"}, ${args.quality || "auto"} quality)${
           hasRefs ? ` from ${args.image_paths!.length} reference image(s)` : ""
         }.`,
         ...saved.map((p) => `  - ${p}`),
-      ].join("\n")
+      ].join("\n") }
     },
-  })
+  }
 }

@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import { Plugin } from "@opencode/plugin"
 import { createImageGenerate } from "./image_generate"
 import { createImageEdit } from "./image_edit"
 
@@ -14,13 +14,12 @@ import { createImageEdit } from "./image_edit"
  *   2. The ChatGPT/Codex subscription already connected via `opencode auth login`
  * See src/opencode-auth.ts for the full resolution order.
  */
-const GptImagePlugin: Plugin = async ({ client }) => {
-  return {
-    tool: {
-      image_generate: createImageGenerate(client),
-      image_edit: createImageEdit(client),
-    },
-  }
-}
-
-export default GptImagePlugin
+export default Plugin.define({
+  id: "opencode-gpt-image",
+  async setup(ctx) {
+    await ctx.tool.transform((editor) => {
+      editor.add(createImageGenerate(ctx))
+      editor.add(createImageEdit(ctx))
+    })
+  },
+})

@@ -1,4 +1,5 @@
 import path from "path"
+import { mkdir } from "node:fs/promises"
 import type { OpenAICredential } from "./opencode-auth"
 
 /**
@@ -49,9 +50,11 @@ export async function requestImages(
   url: string,
   headers: Record<string, string>,
   init: RequestInit,
+  signal?: AbortSignal,
 ): Promise<ImageData[]> {
   const res = await fetch(url, {
     ...init,
+    signal,
     headers: {
       ...headers,
       ...((init.headers as Record<string, string>) || {}),
@@ -117,6 +120,7 @@ export async function saveImages(
   }
 
   const saved: string[] = []
+  await mkdir(targetDir, { recursive: true })
   for (let i = 0; i < data.length; i++) {
     const b64 = data[i]?.b64_json
     if (!b64) continue

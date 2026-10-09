@@ -1,5 +1,5 @@
-import { tool } from "@opencode-ai/plugin"
-import type { PluginInput } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode/plugin"
+import { input as sharedInput, type ImageInput } from "./tool-input"
 import path from "path"
 import {
   CHATGPT_IMAGE_EDIT_ENDPOINT,
@@ -30,71 +30,19 @@ import { resolveCredential } from "./opencode-auth"
  * ./opencode-auth for the full resolution order.
  */
 
-const SIZES = ["auto", "1024x1024", "1536x1024", "1024x1536"] as const
-const QUALITIES = ["auto", "low", "medium", "high"] as const
-const BACKGROUNDS = ["auto", "transparent", "opaque"] as const
-const FORMATS = ["png", "jpeg", "webp"] as const
+type Context = Parameters<NonNullable<ReturnType<typeof Plugin.define>["setup"]>>[0]
 
-export function createImageEdit(client: PluginInput["client"]) {
-  return tool({
+export function createImageEdit(client: Context) {
+  return {
+    name: "image_edit",
     description:
       "Edit or transform one or more existing images with a text prompt using OpenAI's image model (default gpt-image-2). Supports an optional PNG mask to limit edits to a region (platform API key mode only). Saves results to disk and returns the file path(s). Uses an OpenAI platform API key if OPENAI_API_KEY (or ~/.config/opencode/openai.key) is set, otherwise falls back to the ChatGPT/Codex subscription already connected via `opencode auth login`.",
-    args: {
-      prompt: tool.schema
-        .string()
-        .min(1)
-        .describe("Instruction describing the desired edit or transformation."),
-      image_paths: tool.schema
-        .array(tool.schema.string())
-        .min(1)
-        .describe(
-          "Path(s) to input image file(s) (png/jpg/webp). Multiple images are combined/referenced by the model. Relative paths resolve against the session directory.",
-        ),
-      mask_path: tool.schema
-        .string()
-        .optional()
-        .describe(
-          "Optional PNG mask. Transparent areas mark where edits apply; must match the first image's dimensions. Only supported with an OpenAI platform API key (OPENAI_API_KEY). Relative paths resolve against the session directory.",
-        ),
-      size: tool.schema
-        .enum(SIZES)
-        .optional()
-        .describe("Output dimensions. Default 'auto'."),
-      quality: tool.schema
-        .enum(QUALITIES)
-        .optional()
-        .describe("Rendering quality. Higher quality costs more. Default 'auto'."),
-      background: tool.schema
-        .enum(BACKGROUNDS)
-        .optional()
-        .describe(
-          "Background. 'transparent' requires output_format png or webp. Default 'auto'.",
-        ),
-      output_format: tool.schema
-        .enum(FORMATS)
-        .optional()
-        .describe("File format of the saved image. Default 'png'."),
-      n: tool.schema
-        .number()
-        .int()
-        .min(1)
-        .max(10)
-        .optional()
-        .describe("How many output images to generate. Default 1."),
-      output_path: tool.schema
-        .string()
-        .optional()
-        .describe(
-          "Where to save. A directory, or a file path (used as a base name when n>1). Relative paths resolve against the session directory. Defaults to the session directory.",
-        ),
-      model: tool.schema
-        .string()
-        .optional()
-        .describe("Image model id. Defaults to OPENCODE_IMAGE_MODEL or 'gpt-image-2'."),
-    },
-    async execute(args, context) {
+    input: { ...sharedInput, required: ["prompt", "image_paths"] },
+    async execute(raw: unknown, context: { sessionID: string; signal: AbortSignal }) {
+      const args = raw as ImageInput
       const credential = await resolveCredential(client)
-      const baseDir = context.directory || process.cwd()
+      const session = await client.session.get({ sessionID: context.sessionID })
+      const baseDir = session.location.directory
       const model =
         args.model || process.env["OPENCODE_IMAGE_MODEL"] || DEFAULT_MODEL
       const format = args.output_format || "png"
@@ -117,7 +65,7 @@ export function createImageEdit(client: PluginInput["client"]) {
       let data
       if (credential.mode === "oauth") {
         const images = await Promise.all(
-          args.image_paths.map(async (p) => {
+          args.image_paths!.map(async (p) => {
             const abs = resolve(p)
             if (!(await Bun.file(abs).exists())) {
               throw new Error(`Input image not found: ${abs}`)
@@ -136,7 +84,7 @@ export function createImageEdit(client: PluginInput["client"]) {
             size: args.size || "auto",
             quality: args.quality || "auto",
           }),
-        })
+        }, context.signal)
       } else {
         const form = new FormData()
         form.append("model", model)
@@ -147,7 +95,7 @@ export function createImageEdit(client: PluginInput["client"]) {
         form.append("output_format", format)
         if (args.background) form.append("background", args.background)
 
-        for (const p of args.image_paths) {
+        for (const p of args.image_paths!) {
           const abs = resolve(p)
           const file = Bun.file(abs)
           if (!(await file.exists())) {
@@ -168,17 +116,17 @@ export function createImageEdit(client: PluginInput["client"]) {
         data = await requestImages(OPENAI_IMAGE_EDIT_ENDPOINT, authHeaders(credential), {
           method: "POST",
           body: form,
-        })
+        }, context.signal)
       }
 
       const saved = await saveImages(data, format, baseDir, args.output_path)
 
-      return [
+      return { content: [
         `Edited image(s) with ${model} via ${
           credential.mode === "oauth" ? "your ChatGPT subscription" : "the OpenAI API"
-        } from ${args.image_paths.length} input(s)${args.mask_path ? " + mask" : ""}. Saved ${saved.length}:`,
+        } from ${args.image_paths!.length} input(s)${args.mask_path ? " + mask" : ""}. Saved ${saved.length}:`,
         ...saved.map((p) => `  - ${p}`),
-      ].join("\n")
+      ].join("\n") }
     },
-  })
+  }
 }
